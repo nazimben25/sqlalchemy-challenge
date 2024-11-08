@@ -50,6 +50,8 @@ app = Flask(__name__)
 # Flask Routes
 #################################################
 
+## welcome route presentation of the 6 routes available
+
 @app.route("/")
 def welcome():
     """List all available api routes."""
@@ -58,16 +60,19 @@ def welcome():
         f"  <br/>"
         f"Available Routes:<br/>"
         f"  <br/>"
-        f"precipitation full data : /api/v0.1/all_precipitation <br/>"
-        f"precipitation of the last year : /api/v0.1/precipitation_1Y <br/>"
-        f"All the stations : /api/v0.1/station <br/>"
-        f"Temperatures of the last year for the most active station : /api/v0.1/tobs <br/>"
-        f"/api/v0.1/start <br/>"
-        f"/api/v0.1/start_end <br/>"
+        f"Precipitation full data     : /api/v0.1/all_precipitation <br/>"
+        f"Precipitation of the last year     : /api/v0.1/precipitation <br/>"
+        f"Lists of all the stations       : /api/v0.1/station <br/>"
+        f"Temperature of the last year for the most active station    : /api/v0.1/tobs <br/>"
+        f"Returns TMIN, TAVG, TMAX from date to specify (yyyy-mm-dd)      : /api/v0.1/date_start <br/>"
+        f"Returns TMIN, TAVG, TMAX between 2 dates  (yyyy-mm-dd) \
+                : /api/v0.1/date_start/date_end <br/>"
         )
 
+## route all_precipitation : all the data related to the precipitations
+
 @app.route("/api/v0.1/all_precipitation")
-def precipitation():
+def precipitation_all():
 
     # Create our session (link) from Python to the DB
     session = Session(engine)
@@ -76,36 +81,48 @@ def precipitation():
     results = session.query(measurement.date, \
                             measurement.prcp).all()
 
+    # close the sessions
            
-    
+    session.close()
+
+    # convert to a list to be jsonified
     precipitation_res = list(np.ravel(results))
 
     return jsonify(precipitation_res)
 
+# route precipitation : returns the precipitation data for the last year before th max date
 
-@app.route("/api/v0.1/precipitation_1y")
-def precipitation_1y():
+@app.route("/api/v0.1/precipitation")
+def precipitation():
 
     # Create our session (link) from Python to the DB
     session = Session(engine)
 
-    # query for precipitation
-
+    # query measurment table for the last date in the DB
     date_most_recent = session.query(measurement.date).order_by(measurement.date.desc()).first()
     date_most_recent = date_most_recent.date 
     date_most_recent = datetime.strptime(date_most_recent, '%Y-%m-%d')
+
+    #retrive the dat 1Y before
     date_1y_ago = date_most_recent - relativedelta(years=1)
     date_1y_ago = date_1y_ago.strftime('%Y-%m-%d')
     
+    # from measurment table, extrat precipitation data for the last year , ad order by date
+
     result_1y = session.query(measurement.date, measurement.prcp)\
     .filter(measurement.date >= date_1y_ago)\
     .order_by(measurement.date).all()
-         
+
+
+    # close the session     
+    session.close()
     
+    # convert to a list to be jsonified
     precipitation_res_1y = list(np.ravel(result_1y))
 
     return jsonify(precipitation_res_1y)
 
+## returns all the stations with their name
 
 @app.route("/api/v0.1/station")
 def station_list():
@@ -113,52 +130,139 @@ def station_list():
     # Create our session (link) from Python to the DB
     session = Session(engine)
 
-    # query for precipitation
-    results = session.query(station.station, \
-                            station.name).all()
+    # query 'station' table
+    results = session.query(station.station \
+                            ,station.name \
+                            ,station.longitude  \
+                            ,station.latitude \
+                            ,station.elevation  \
+                            ).all()
+         
+    # close the session               
+    session.close()
 
-           
-    
-    station_result = list(np.ravel(results))
+    stations_list = []
+    for id, name, lon, lat, elev   in results:
+            station_dict = {}
+            station_dict['station_id'] = id
+            station_dict['name'] = name
+            station_dict['longitude'] = lon
+            station_dict['latitude'] = lat
+            station_dict['elevation'] = elev
 
-    return jsonify(station_result)
+            stations_list.append(station_dict)
 
 
+    return jsonify(stations_list)
+
+## returns temparature statistics (TMIN, TAVG, TMAX) between a date to specify and the last date available
 
 @app.route("/api/v0.1/tobs")
 def tobs():
     # Create our session (link) from Python to the DB
     session = Session(engine)
 
-    # query for temperatures
+    # retrieve the last date (recent) + conversion from measurment table
 
     date_most_recent = session.query(measurement.date).order_by(measurement.date.desc()).first()
     date_most_recent = date_most_recent.date 
     date_most_recent = datetime.strptime(date_most_recent, '%Y-%m-%d')
+    
+    # retrieve the date 1y before : + conversion from measurment table
+
     date_1y_ago = date_most_recent - relativedelta(years=1)
     date_1y_ago = date_1y_ago.strftime('%Y-%m-%d')
+    
+    # retrive the most active station from measurment table
+
     station_active = session.query(measurement.station, \
                 func.count(measurement.station)).\
                 group_by(measurement.station).\
                 order_by(func.count(measurement.station).desc())\
                 .all()
     most_active_station = station_active[0][0]
+
+    # collect data related to the last year for the most active station from measurment table
+
     result_1y = session.query(measurement.date, measurement.tobs)\
             .filter(measurement.date >= date_1y_ago)\
             .filter(measurement.station == most_active_station) \
             .group_by(measurement.date)\
             .order_by(measurement.date).all()
     
+    # convert to a list to be jsonified    
+    
     temperature_1y = list(np.ravel(result_1y))
+
+           
+    session.close()
 
     return jsonify(temperature_1y)
 
+## returns temparature statistics (TMIN, TAVG, TMAX) between a date to specify and the last date available
 
-# @app.route("/")
-# def start():
 
-# @app.route("/")
-# def start_end():
+@app.route("/api/v0.1/<date_start>")
+def start(date_start):
 
+    # from measurment, calculate TMIN, TAVG, TMAX for date greater than the one specified 
+    result = session.query(func.min(measurement.tobs)\
+                    ,func.avg(measurement.tobs)\
+                    ,func.max(measurement.tobs))\
+                    .filter(measurement.date >= date_start)\
+                    .all()
+    
+    # close the session
+    session.close()
+
+    # extract the item to generate the needed dictionary to be jsonified
+
+    tmin, tavg, tmax = result[0]
+    return jsonify({'TMIN': tmin,
+                   'TAVG': tavg,
+                   'TMAX' : tmax
+                   })
+
+## returns temparature statistics (TMIN, TAVG, TMAX) between 2 dates to be specified in the API address (start_date and )
+
+@app.route("/api/v0.1/<date_start>/<date_end>")
+def start_end(date_start, date_end):
+
+    # set a condition to be sure that dates are consistant
+
+    if date_end > date_start :
+
+        # grop by table measurment, and calculate TMIN, TAVG, TMAX) for each date after filter of dates              
+        result = session.query(measurement.date, func.min(measurement.tobs)\
+                        ,func.avg(measurement.tobs)\
+                        ,func.max(measurement.tobs))\
+                        .filter(measurement.date >= date_start)\
+                        .filter(measurement.date <= date_end)\
+                        .group_by(measurement.date)\
+                        .all()
+
+        # close session
+        session.close()        
+        
+        #create a list to be jsonified, by loopong through the result above
+ 
+        stats_by_date = []
+        for date_x, tmin, tavg, tmax in result:
+            stats_dict = {}
+            stats_dict['DATE'] = date_x
+            stats_dict['TMIN'] = tmin
+            stats_dict['TAVG'] = tavg
+            stats_dict['TMAX'] = tmax
+
+            stats_by_date.append(stats_dict)
+
+        return jsonify(stats_by_date)
+    
+    else : 
+        # error message if dates are not consistant
+        return 'NEIN!!! DAS IST NCH GUT !!! <br/> \
+            Date_end must be later than start_date. <br/> \
+            In other words, you must enter a date_end that is after a date_start'
+    
 if __name__ == "__main__":
     app.run(debug=True)
