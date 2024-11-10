@@ -40,6 +40,20 @@ session = Session(engine)
 # print(session.query(measurement).first().__dict__)
 # print(session.query(station).first().__dict__)
 
+# retrieve the last date (recent) + conversion from measurment table
+
+date_most_recent = session.query(measurement.date).order_by(measurement.date.desc()).first()
+date_most_recent = date_most_recent.date 
+    
+    
+# retrieve the most active station from measurment table
+
+station_active = session.query(measurement.station, \
+                func.count(measurement.station)).\
+                group_by(measurement.station).\
+                order_by(func.count(measurement.station).desc())\
+                .all()
+most_active_station = station_active[0][0]
 
 #################################################
 # Flask Setup
@@ -60,7 +74,6 @@ def welcome():
         f"  <br/>"
         f"Available Routes:<br/>"
         f"  <br/>"
-        f"Precipitation full data     : /api/v0.1/all_precipitation <br/>"
         f"Precipitation of the last year     : /api/v0.1/precipitation <br/>"
         f"Lists of all the stations       : /api/v0.1/station <br/>"
         f"Temperature of the last year for the most active station    : /api/v0.1/tobs <br/>"
@@ -69,26 +82,6 @@ def welcome():
                 : /api/v0.1/date_start/date_end <br/>"
         )
 
-## route all_precipitation : all the data related to the precipitations
-
-@app.route("/api/v0.1/all_precipitation")
-def precipitation_all():
-
-    # Create our session (link) from Python to the DB
-    session = Session(engine)
-
-    # query for precipitation
-    results = session.query(measurement.date, \
-                            measurement.prcp).all()
-
-    # close the sessions
-           
-    session.close()
-
-    # convert to a list to be jsonified
-    precipitation_res = list(np.ravel(results))
-
-    return jsonify(precipitation_res)
 
 # route precipitation : returns the precipitation data for the last year before th max date
 
@@ -99,29 +92,29 @@ def precipitation():
     session = Session(engine)
 
     # query measurment table for the last date in the DB
-    date_most_recent = session.query(measurement.date).order_by(measurement.date.desc()).first()
-    date_most_recent = date_most_recent.date 
-    date_most_recent = datetime.strptime(date_most_recent, '%Y-%m-%d')
 
-    #retrive the dat 1Y before
-    date_1y_ago = date_most_recent - relativedelta(years=1)
-    date_1y_ago = date_1y_ago.strftime('%Y-%m-%d')
+    precipitation_1y = session.query(measurement.date, measurement.prcp)\
+              .filter(measurement.date >= \
+                   (datetime.strptime(date_most_recent, "%Y-%m-%d")- timedelta(days=366) )\
+                   )\
+              .order_by(measurement.date) \
+              .all()       
     
-    # from measurment table, extrat precipitation data for the last year , ad order by date
+    #create a list to be jsonified, by looping through the result above
+    prcp_by_date = []
 
-    result_1y = session.query(measurement.date, measurement.prcp)\
-    .filter(measurement.date >= date_1y_ago)\
-    .order_by(measurement.date).all()
+    for date_x, prcp_x in precipitation_1y :
+        prcp_dict = {}
+        prcp_dict['Date'] = date_x
+        prcp_dict['prcp'] = prcp_x
 
+        prcp_by_date.append(prcp_dict)
 
     # close the session     
     session.close()
     
-    # convert to a list to be jsonified
-    precipitation_res_1y = list(np.ravel(result_1y))
 
-    return jsonify(precipitation_res_1y)
-
+    return jsonify(prcp_by_date)
 ## returns all the stations with their name
 
 @app.route("/api/v0.1/station")
@@ -162,42 +155,31 @@ def tobs():
     # Create our session (link) from Python to the DB
     session = Session(engine)
 
-    # retrieve the last date (recent) + conversion from measurment table
-
-    date_most_recent = session.query(measurement.date).order_by(measurement.date.desc()).first()
-    date_most_recent = date_most_recent.date 
-    date_most_recent = datetime.strptime(date_most_recent, '%Y-%m-%d')
-    
-    # retrieve the date 1y before : + conversion from measurment table
-
-    date_1y_ago = date_most_recent - relativedelta(years=1)
-    date_1y_ago = date_1y_ago.strftime('%Y-%m-%d')
-    
-    # retrive the most active station from measurment table
-
-    station_active = session.query(measurement.station, \
-                func.count(measurement.station)).\
-                group_by(measurement.station).\
-                order_by(func.count(measurement.station).desc())\
-                .all()
-    most_active_station = station_active[0][0]
-
     # collect data related to the last year for the most active station from measurment table
 
-    result_1y = session.query(measurement.date, measurement.tobs)\
-            .filter(measurement.date >= date_1y_ago)\
-            .filter(measurement.station == most_active_station) \
-            .group_by(measurement.date)\
-            .order_by(measurement.date).all()
+    tobs_1y = session.query(measurement.station, measurement.date, measurement.tobs)\
+        .filter(measurement.date >= \
+                (datetime.strptime(date_most_recent, "%Y-%m-%d")- timedelta(days=366) )\
+                )\
+        .filter(measurement.station == most_active_station) \
+        .group_by(measurement.date)\
+        .order_by(measurement.date).all()
     
-    # convert to a list to be jsonified    
     
-    temperature_1y = list(np.ravel(result_1y))
+    #create a list to be jsonified, by looping through the result above
+    temp_by_date = []
 
+    for station_x, date_x, tobs_x in tobs_1y :
+        temp_dict = {}
+        temp_dict['station'] = station_x
+        temp_dict['Date'] = date_x
+        temp_dict['tobs'] = tobs_x
+
+        temp_by_date.append(temp_dict)
            
     session.close()
 
-    return jsonify(temperature_1y)
+    return jsonify(temp_by_date)
 
 ## returns temparature statistics (TMIN, TAVG, TMAX) between a date to specify and the last date available
 
@@ -260,9 +242,12 @@ def start_end(date_start, date_end):
     
     else : 
         # error message if dates are not consistant
-        return 'NEIN!!! DAS IST NCH GUT !!! <br/> \
+        return 'NEIN!!! DAS IST NICH GUT !!! <br/> \
+            <br/> \
             Date_end must be later than start_date. <br/> \
-            In other words, you must enter a date_end that is after a date_start'
+            In other words, you must enter a "date_end" that is after a "date_start". <br/> \
+            <br/> \
+            Respect the format yyyy-mm-dd'
     
 if __name__ == "__main__":
     app.run(debug=True)
