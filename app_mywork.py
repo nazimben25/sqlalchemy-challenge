@@ -12,6 +12,8 @@ from dateutil.relativedelta import relativedelta
 
 from flask import Flask, jsonify
 
+    
+from collections import defaultdict  # to generate dictionary 'precipitation
 
 ################################################
 # Database Setup
@@ -27,7 +29,7 @@ Base.prepare(autoload_with=engine)
 Base.classes.keys()
 
 #to check
-# print(Base.classes.keys())
+print(Base.classes.keys())
 
 # Save references to each table
 measurement = Base.classes.measurement
@@ -37,8 +39,8 @@ station = Base.classes.station
 session = Session(engine)
 
 #to check
-# print(session.query(measurement).first().__dict__)
-# print(session.query(station).first().__dict__)
+print(session.query(measurement).first().__dict__)
+print(session.query(station).first().__dict__)
 
 # retrieve the last date (recent) + conversion from measurment table
 
@@ -112,9 +114,23 @@ def precipitation():
 
     # close the session     
     session.close()
-    
 
-    return jsonify(prcp_by_date)
+    ## cnvert t dictionary with key as date and prcp as values
+    date_values = defaultdict(list)
+
+    # Populate the dictionary
+    for entry in prcp_by_date:
+        date = entry["Date"]
+        prcp = entry["prcp"]
+        date_values[date].append(prcp)
+
+    # Convert defaultdict to a regular dict if desired
+    date_values = dict(date_values)
+
+    return jsonify(date_values)
+
+
+
 ## returns all the stations with their name
 
 @app.route("/api/v0.1/station")
@@ -249,5 +265,6 @@ def start_end(date_start, date_end):
             <br/> \
             Respect the format yyyy-mm-dd'
     
-if __name__ == "__main__":
+
+if __name__ == '__main__':
     app.run(debug=True)
